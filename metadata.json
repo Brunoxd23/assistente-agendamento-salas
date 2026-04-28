@@ -1,0 +1,6 @@
+{
+  "name": "Assistente de Agendamento de Salas",
+  "description": "Assistente inteligente para consulta de agendamento de salas, eventos e disponibilidade em diversas unidades da instituição.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
