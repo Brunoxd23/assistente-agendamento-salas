@@ -6,11 +6,11 @@
 import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 import { getAgendamentos, FiltrosAgendamento } from "./schedulingService";
 
-const API_KEY = process.env.GEMINI_API_KEY;
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
 if (!API_KEY) {
   throw new Error(
-    "GEMINI_API_KEY is not defined. Please set it in the Secrets panel.",
+    "VITE_GEMINI_API_KEY is not defined. Por favor, defina no arquivo .env.",
   );
 }
 
