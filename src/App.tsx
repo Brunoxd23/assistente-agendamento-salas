@@ -33,6 +33,16 @@ function cn(...inputs: ClassValue[]) {
 }
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState<{ name: string; email: string } | null>(null);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState("");
+  const [loginStep, setLoginStep] = useState<"email" | "code">("email");
+  const [emailInput, setEmailInput] = useState("");
+  const [otpInput, setOtpInput] = useState(["", "", "", "", "", ""]);
+  const [generatedCode, setGeneratedCode] = useState("");
+  const [toast, setToast] = useState<{ message: string; type: "error" | "success" } | null>(null);
+  const [rememberMe, setRememberMe] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "model",
@@ -43,12 +53,169 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  
+  const handleSendCode = async () => {
+    if (!emailInput.includes("@")) {
+      alert("Por favor, insira um e-mail válido.");
+      return;
+    }
+
+    // VERIFICAÇÃO DE "CONFIANÇA": Se já entrou com esse e-mail nos últimos 30 dias
+    const savedSession = localStorage.getItem("auth_session");
+    if (savedSession) {
+      try {
+        const session = JSON.parse(savedSession);
+        const now = Date.now();
+        const expiresAt = session.expiresAt || (session.timestamp + (24 * 60 * 60 * 1000));
+        
+        if (session.user.email.toLowerCase() === emailInput.toLowerCase() && now < expiresAt) {
+          // Pular código e entrar direto
+          setIsLoading(true);
+          setTimeout(() => {
+            setUser(session.user);
+            setIsAuthenticated(true);
+            setIsLoading(false);
+          }, 800);
+          return;
+        }
+      } catch (e) {
+        localStorage.removeItem("auth_session");
+      }
+    }
+
+    setIsLoading(true);
+    
+    const showToast = (message: string) => {
+      setToast({ message, type: "error" });
+      setTimeout(() => setToast(null), 4000);
+    };
+    
+    // Gerar código de 6 dígitos
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    setGeneratedCode(code);
+
+    try {
+      const response = await fetch("/api/send-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: emailInput, code }),
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        if (response.status === 403) {
+          showToast("E-MAIL NÃO CADASTRADO. ENTRE EM CONTATO COM SEU ADMIN.");
+        } else {
+          showToast(data.error || "E-MAIL NÃO CADASTRADO. ENTRE EM CONTATO COM SEU ADMIN.");
+        }
+        return;
+      }
+
+      setLoginStep("code");
+    } catch (error) {
+      console.error("Erro no envio:", error);
+      showToast("E-MAIL NÃO CADASTRADO. ENTRE EM CONTATO COM SEU ADMIN.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleVerifyCode = () => {
+    const codeEntered = otpInput.join("");
+    if (codeEntered !== generatedCode) {
+      alert("Código inválido! Por favor, utilize o código enviado (ver dica abaixo).");
+      return;
+    }
+    
+    setIsLoading(true);
+    setTimeout(() => {
+      const userData = { 
+        name: emailInput.split("@")[0].charAt(0).toUpperCase() + emailInput.split("@")[0].slice(1), 
+        email: emailInput 
+      };
+      
+      setUser(userData);
+      setIsAuthenticated(true);
+      setIsLoading(false);
+
+      // Calcular tempo de expiração: 24h ou 30 dias
+      const duration = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+      
+      // Salvar sessão com expiração dinâmica
+      localStorage.setItem("auth_session", JSON.stringify({
+        user: userData,
+        timestamp: Date.now(),
+        expiresAt: Date.now() + duration
+      }));
+    }, 1500);
+  };
+
+  const handleOtpChange = (index: number, value: string) => {
+    if (!/^\d*$/.test(value)) return;
+    const newOtp = [...otpInput];
+    newOtp[index] = value.slice(-1);
+    setOtpInput(newOtp);
+
+    // Auto-focus para o próximo campo
+    if (value && index < 5) {
+      const nextInput = document.getElementById(`otp-${index + 1}`);
+      nextInput?.focus();
+    }
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    setUser(null);
+    setLoginStep("email");
+    setIsEditingName(false);
+    
+    // Verificamos se a sessão deve ser limpa ou mantida (se for de 30 dias, mantemos para pular o código no próximo login)
+    const savedSession = localStorage.getItem("auth_session");
+    if (savedSession) {
+      try {
+        const session = JSON.parse(savedSession);
+        const duration = session.expiresAt - session.timestamp;
+        const isLongSession = duration > 2 * 24 * 60 * 60 * 1000; // Mais de 2 dias = sessão de 30 dias
+        
+        if (!isLongSession) {
+          localStorage.removeItem("auth_session");
+        }
+      } catch (e) {
+        localStorage.removeItem("auth_session");
+      }
+    }
+
+    setOtpInput(["", "", "", "", "", ""]);
+    setGeneratedCode("");
+  };
 
   useEffect(() => {
+    // Verificar sessão persistente
+    const savedSession = localStorage.getItem("auth_session");
+    if (savedSession) {
+      try {
+        const session = JSON.parse(savedSession);
+        const now = Date.now();
+        
+        // Versão legada pode não ter expiresAt, mantemos o fallback de 24h
+        const expiresAt = session.expiresAt || (session.timestamp + (24 * 60 * 60 * 1000));
+        
+        if (now < expiresAt) {
+          setUser(session.user);
+          setIsAuthenticated(true);
+        } else {
+          localStorage.removeItem("auth_session");
+        }
+      } catch (e) {
+        localStorage.removeItem("auth_session");
+      }
+    }
+
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, isLoading]);
+  }, [messages, isLoading, isAuthenticated]);
 
   const handleSend = async (overrideText?: string) => {
     const textToChat = overrideText || input;
@@ -77,6 +244,29 @@ export default function App() {
 
   const handleQuickAction = (text: string) => {
     handleSend(text);
+  };
+
+  const handleUpdateName = () => {
+    if (!user || !nameInput.trim()) {
+      setIsEditingName(false);
+      return;
+    }
+    
+    const updatedUser = { ...user, name: nameInput.trim() };
+    setUser(updatedUser);
+    setIsEditingName(false);
+    
+    // Atualizar no localStorage
+    const savedSession = localStorage.getItem("auth_session");
+    if (savedSession) {
+      try {
+        const session = JSON.parse(savedSession);
+        session.user = updatedUser;
+        localStorage.setItem("auth_session", JSON.stringify(session));
+      } catch (e) {
+        console.error("Erro ao atualizar nome na sessão:", e);
+      }
+    }
   };
 
   const SidebarContent = () => (
@@ -135,6 +325,161 @@ export default function App() {
       </div>
     </>
   );
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-[#FDFDFF] flex items-center justify-center p-4 font-sans selection:bg-blue-100">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="max-w-md w-full bg-white rounded-[3rem] shadow-[0_30px_60px_-15px_rgba(0,0,0,0.05)] border border-slate-50 p-8 sm:p-12 text-center"
+        >
+          <div className="inline-flex p-5 bg-blue-600 rounded-[2.5rem] text-white shadow-2xl shadow-blue-600/30 mb-8">
+            <Building2 size={32} />
+          </div>
+          
+          <AnimatePresence mode="wait">
+            {loginStep === "email" ? (
+              <motion.div
+                key="email"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                className="space-y-6"
+              >
+                <h1 className="text-3xl font-black text-slate-800 tracking-tighter">
+                  Acesso <span className="text-blue-600">Institucional</span>
+                </h1>
+                <p className="text-slate-400 text-sm font-medium leading-relaxed">
+                  Digite seu e-mail para receber um código de acesso rápido.
+                </p>
+
+                <div className="space-y-4">
+                  <div className="text-left">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-4 mb-2 block">E-mail Corporativo</label>
+                    <input
+                      type="email"
+                      value={emailInput}
+                      onChange={(e) => {
+                        setEmailInput(e.target.value);
+                      }}
+                      placeholder="seu@instituicao.edu.br"
+                      className={cn(
+                        "w-full bg-slate-50 border-2 rounded-2xl py-4 px-6 text-sm font-semibold focus:outline-none transition-all placeholder:text-slate-300",
+                        "border-slate-100 focus:ring-4 focus:ring-blue-100 focus:border-blue-500"
+                      )}
+                    />
+                  </div>
+                  <button
+                    onClick={handleSendCode}
+                    disabled={isLoading || !emailInput.includes("@")}
+                    className="w-full bg-blue-600 text-white py-4.5 rounded-2xl font-bold transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-blue-600/20 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isLoading ? <Loader2 className="animate-spin" size={20} /> : "Entrar"}
+                  </button>
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="code"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                className="space-y-6"
+              >
+                <h1 className="text-3xl font-black text-slate-800 tracking-tighter">
+                  Verificar <span className="text-blue-600">Código</span>
+                </h1>
+                <p className="text-slate-400 text-sm font-medium leading-relaxed">
+                  Enviamos um código de 6 dígitos para o endereço <strong className="text-slate-600">{emailInput}</strong>
+                </p>
+
+                <div className="flex justify-between gap-2 max-w-xs mx-auto py-4">
+                  {otpInput.map((digit, idx) => (
+                    <input
+                      key={idx}
+                      id={`otp-${idx}`}
+                      type="text"
+                      maxLength={1}
+                      value={digit}
+                      onChange={(e) => handleOtpChange(idx, e.target.value)}
+                      className="w-10 h-14 bg-slate-50 border-2 border-slate-100 rounded-xl text-center text-xl font-bold text-blue-600 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all"
+                    />
+                  ))}
+                </div>
+
+                <div className="flex items-center justify-center gap-2 mb-6 cursor-pointer group" onClick={() => setRememberMe(!rememberMe)}>
+                  <div className={cn(
+                    "w-4 h-4 rounded border transition-all flex items-center justify-center",
+                    rememberMe ? "bg-blue-600 border-blue-600" : "bg-slate-50 border-slate-200 group-hover:border-blue-300"
+                  )}>
+                    {rememberMe && <div className="w-2 h-2 bg-white rounded-full" />}
+                  </div>
+                  <span className="text-[11px] font-bold text-slate-500 tracking-tight select-none">Manter conectado por 30 dias</span>
+                </div>
+
+                <div className="space-y-4">
+                  <button
+                    onClick={handleVerifyCode}
+                    disabled={isLoading || otpInput.some(d => !d)}
+                    className="w-full bg-blue-600 text-white py-4.5 rounded-2xl font-bold transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-blue-600/20 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isLoading ? <Loader2 className="animate-spin" size={20} /> : "Entrar no Sistema"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setLoginStep("email");
+                    }}
+                    className="text-xs text-slate-400 font-bold hover:text-blue-600 transition-colors uppercase tracking-[0.2em]"
+                  >
+                    Alterar E-mail
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {toast && (
+              <motion.div
+                initial={{ opacity: 0, x: 50, y: -20 }}
+                animate={{ opacity: 1, x: 0, y: 0 }}
+                exit={{ opacity: 0, x: 20, scale: 0.9 }}
+                className="fixed top-8 right-8 z-[100] w-full max-w-sm"
+              >
+                <div className="bg-white rounded-3xl shadow-[0_20px_50px_-20px_rgba(239,68,68,0.3)] border border-red-50 overflow-hidden">
+                  <div className="p-6 flex items-start gap-4">
+                    <div className="w-10 h-10 rounded-2xl bg-red-50 flex items-center justify-center flex-shrink-0">
+                      <X className="text-red-500" size={20} />
+                    </div>
+                    <div className="flex-1 min-w-0 pr-4">
+                      <p className="text-[10px] font-black text-red-400 uppercase tracking-[0.2em] mb-1.5">Erro de Acesso</p>
+                      <p className="text-xs font-bold text-slate-700 leading-tight">
+                        {toast.message}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="h-1 bg-red-50 w-full relative">
+                    <motion.div 
+                      initial={{ width: "100%" }}
+                      animate={{ width: "0%" }}
+                      transition={{ duration: 4, ease: "linear" }}
+                      className="absolute inset-0 bg-red-500"
+                    />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className="mt-12 pt-8 border-t border-slate-50 flex items-center justify-center gap-2">
+            <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.5)]"></span>
+            <span className="text-[9px] text-slate-300 font-bold uppercase tracking-[0.2em]">Servidor Seguro Ativo</span>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-[#FDFDFF] text-slate-900 font-sans selection:bg-blue-100">
@@ -199,11 +544,48 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-4">
-            <div className="hidden md:flex flex-col items-end">
-              <span className="text-xs font-bold text-slate-700 tracking-tight">28 de Abril, 2026</span>
-              <span className="text-[10px] text-slate-400 font-medium tracking-wide uppercase">Terça-feira</span>
+            <div className="hidden md:flex flex-col items-end min-w-[120px]">
+              {isEditingName ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    autoFocus
+                    type="text"
+                    value={nameInput}
+                    onChange={(e) => setNameInput(e.target.value)}
+                    onBlur={handleUpdateName}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleUpdateName();
+                      if (e.key === "Escape") setIsEditingName(false);
+                    }}
+                    className="text-xs font-bold text-slate-700 bg-slate-50 border border-blue-200 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-blue-100"
+                  />
+                </div>
+              ) : (
+                <span 
+                  onClick={() => {
+                    setNameInput(user?.name || "");
+                    setIsEditingName(true);
+                  }}
+                  className="text-xs font-bold text-slate-700 tracking-tight cursor-pointer hover:text-blue-600 transition-colors flex items-center gap-1.5"
+                  title="Clique para editar seu nome"
+                >
+                  {user?.name || "Usuário"}
+                </span>
+              )}
+              <button 
+                onClick={handleLogout}
+                className="text-[9px] text-red-500 font-bold uppercase tracking-widest hover:underline"
+              >
+                Encerrar Sessão
+              </button>
             </div>
-            <div className="w-10 h-10 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-center">
+            <div 
+              className="w-10 h-10 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-center cursor-pointer hover:border-blue-200 transition-all"
+              onClick={() => {
+                setNameInput(user?.name || "");
+                setIsEditingName(true);
+              }}
+            >
               <User size={20} className="text-slate-600" />
             </div>
           </div>

@@ -9,20 +9,24 @@ import { getAgendamentos, FiltrosAgendamento } from "./schedulingService";
 const API_KEY = process.env.GEMINI_API_KEY;
 
 if (!API_KEY) {
-  throw new Error("GEMINI_API_KEY is not defined. Please set it in the Secrets panel.");
+  throw new Error(
+    "GEMINI_API_KEY is not defined. Please set it in the Secrets panel.",
+  );
 }
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 const getAgendamentosTool: FunctionDeclaration = {
   name: "get_agendamentos",
-  description: "Consulta a ocupação de salas, eventos e disponibilidade de agendamentos.",
+  description:
+    "Consulta a ocupação de salas, eventos e disponibilidade de agendamentos.",
   parameters: {
     type: Type.OBJECT,
     properties: {
       data: {
         type: Type.STRING,
-        description: "Data para consulta (formato YYYY-MM-DD). Ex: '2026-04-28'.",
+        description:
+          "Data para consulta (formato YYYY-MM-DD). Ex: '2026-04-28'.",
       },
       unidade: {
         type: Type.STRING,
@@ -89,7 +93,10 @@ export interface Message {
   text: string;
 }
 
-export async function chatWithGemini(userText: string, history: Message[]): Promise<string> {
+export async function chatWithGemini(
+  userText: string,
+  history: Message[],
+): Promise<string> {
   const contents = [
     ...history.map((m) => ({
       role: m.role,
@@ -134,7 +141,13 @@ export async function chatWithGemini(userText: string, history: Message[]): Prom
         ...contents,
         {
           role: "model",
-          parts: response.candidates[0].content.parts,
+          parts:
+            response.candidates &&
+            response.candidates[0] &&
+            response.candidates[0].content &&
+            response.candidates[0].content.parts
+              ? response.candidates[0].content.parts
+              : [{ text: "" }],
         },
         {
           role: "user",
@@ -146,7 +159,10 @@ export async function chatWithGemini(userText: string, history: Message[]): Prom
       },
     });
 
-    return finalResponse.text || "Desculpe, ocorreu um erro ao processar sua solicitação.";
+    return (
+      finalResponse.text ||
+      "Desculpe, ocorreu um erro ao processar sua solicitação."
+    );
   }
 
   return response.text || "Não entendi sua solicitação. Pode repetir?";
